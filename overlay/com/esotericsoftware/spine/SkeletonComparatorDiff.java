@@ -99,26 +99,28 @@ class SkeletonComparatorDiff {
 			this.bonesParentChanged = Collections.unmodifiableList(bonesParentChanged);
 		}
 
-		String summaryText () {
+		String summaryText (boolean chinese) {
 			StringBuilder text = new StringBuilder(128);
-			text.append("Animations: A=");
+			text.append(chinese ? "动画" : "Animations");
+			text.append(": A=");
 			text.append(skeletonA.animationNames.size());
 			text.append(", B=");
 			text.append(skeletonB.animationNames.size());
-			text.append(", A only=");
+			text.append(chinese ? ", 仅 A=" : ", A only=");
 			text.append(animationsOnlyInA.size());
-			text.append(", B only=");
+			text.append(chinese ? ", 仅 B=" : ", B only=");
 			text.append(animationsOnlyInB.size());
 			text.append('\n');
-			text.append("Bones: A=");
+			text.append(chinese ? "骨骼" : "Bones");
+			text.append(": A=");
 			text.append(skeletonA.boneParents.size());
 			text.append(", B=");
 			text.append(skeletonB.boneParents.size());
-			text.append(", A only=");
+			text.append(chinese ? ", 仅 A=" : ", A only=");
 			text.append(bonesOnlyInA.size());
-			text.append(", B only=");
+			text.append(chinese ? ", 仅 B=" : ", B only=");
 			text.append(bonesOnlyInB.size());
-			text.append(", parent changed=");
+			text.append(chinese ? ", 父级变化=" : ", parent changed=");
 			text.append(bonesParentChanged.size());
 			return text.toString();
 		}

@@ -12,8 +12,10 @@
 - 对比骨骼数量和骨骼名差异
 - 对比同名骨骼的父骨骼差异
 - 提供独立窗口 UI
-- 支持 `Open A`、`Open B`、`Reload A`、`Reload B`、`Reload Both`
-- 支持拖拽文件到窗口
+- 支持左右拖拽区域
+- 支持点击 A / B 卡片直接选择文件
+- 支持单独刷新 A / B
+- 支持中英文切换
 
 ## 适用场景
 
@@ -22,16 +24,19 @@
 - 对比骨骼结构是否发生变化
 - 辅助资源版本回归检查
 
-## 当前仓库内容
+## 仓库结构
 
-这个仓库目前是一个“开发整理目录”，主要用于把当前成果独立整理出来，方便继续开发和迁移。
-
-### 目录说明
+这个仓库是比较器功能的独立整理目录，方便继续开发、迁移和同步到上游工程。
 
 - `overlay/`
-  - 保存当前 4 个核心类的独立副本
+  - 当前 4 个核心类的独立副本
+- `upstream-overlay/`
+  - 当前真正运行所依赖的上游覆盖文件
+  - 包含 `SkeletonViewerAtlas.java`、`build.gradle`、`skin/` 资源和中文字体
+- `scripts/`
+  - 用于把本仓库中的覆盖文件同步到上游 `spine-libgdx` 并直接运行
 - `UPSTREAM_CHANGES.md`
-  - 记录为了接入上游 `spine-runtimes` 做过的额外修改
+  - 记录为了接入上游 `spine-runtimes` 做过的修改
 
 ## 核心类
 
@@ -42,37 +47,55 @@
 - `overlay/com/esotericsoftware/spine/SkeletonComparatorLoader.java`
 - `overlay/com/esotericsoftware/spine/SkeletonComparatorDiff.java`
 
-## 当前真实运行位置
+## 与上游工程的关系
 
-当前已经接入并可运行的版本，实际位于上游工程：
+当前可运行版本仍然是通过接入上游 `spine-runtimes` 工程实现的。
 
-- `spine-runtimes/spine-libgdx/spine-skeletonviewer/src/com/esotericsoftware/spine/SkeletonComparator.java`
-- `spine-runtimes/spine-libgdx/spine-skeletonviewer/src/com/esotericsoftware/spine/SkeletonComparatorUI.java`
-- `spine-runtimes/spine-libgdx/spine-skeletonviewer/src/com/esotericsoftware/spine/SkeletonComparatorLoader.java`
-- `spine-runtimes/spine-libgdx/spine-skeletonviewer/src/com/esotericsoftware/spine/SkeletonComparatorDiff.java`
+- `overlay/` 保存比较器本体
+- `upstream-overlay/` 保存当前版本真正需要同步到上游的其他文件
+- 上游改动说明见 `UPSTREAM_CHANGES.md`
 
-此外还涉及这些上游集成修改：
+## 快速运行
 
-- `spine-runtimes/spine-libgdx/spine-skeletonviewer/src/com/esotericsoftware/spine/SkeletonViewerAtlas.java`
-- `spine-runtimes/spine-libgdx/spine-skeletonviewer/src/com/esotericsoftware/spine/SkeletonViewer.java`
-- `spine-runtimes/spine-libgdx/build.gradle`
+### macOS / Linux
 
-详细说明见 `UPSTREAM_CHANGES.md`。
+默认假设上游工程位于同级目录的 `../spine-runtimes/spine-libgdx`：
 
-## 当前启动方式
+```bash
+./scripts/run-comparator.sh
+```
 
-在上游工程根目录执行：
+如果你的上游工程不在这个位置，可以先设置环境变量：
 
-```powershell
-cd F:\Coding\spine_Ani\spine-runtimes\spine-libgdx
-java -jar .\spine-skeletonviewer\build\libs\spine-skeletonviewer-4.2.13-SNAPSHOT-comparator.jar
+```bash
+SPINE_LIBGDX_DIR="/path/to/spine-libgdx" ./scripts/run-comparator.sh
 ```
 
 如果要带两份文件启动：
 
-```powershell
-cd F:\Coding\spine_Ani\spine-runtimes\spine-libgdx
-java -jar .\spine-skeletonviewer\build\libs\spine-skeletonviewer-4.2.13-SNAPSHOT-comparator.jar "F:\path\A.json" "F:\path\B.json"
+```bash
+./scripts/run-comparator.sh "/path/to/A.json" "/path/to/B.json"
+```
+
+### Windows
+
+默认假设上游工程位于同级目录的 `..\spine-runtimes\spine-libgdx`：
+
+```bat
+scripts\run-comparator.bat
+```
+
+如果你的上游工程在其他位置，可以先设置环境变量：
+
+```bat
+set SPINE_LIBGDX_DIR=D:\path\to\spine-libgdx
+scripts\run-comparator.bat
+```
+
+如果要带两份文件启动：
+
+```bat
+scripts\run-comparator.bat "D:\path\A.json" "D:\path\B.json"
 ```
 
 ## 当前状态
@@ -81,6 +104,7 @@ java -jar .\spine-skeletonviewer\build\libs\spine-skeletonviewer-4.2.13-SNAPSHOT
 - 核心 diff 逻辑已完成
 - 已验证真实示例文件的结构对比结果
 - 目前重点仍是“结构差异”，还不是完整的动画深度比较器
+- 当前阶段优先保证开发调试方便，最终分发包可后续再做
 
 ## 下一步建议
 
@@ -89,5 +113,5 @@ java -jar .\spine-skeletonviewer\build\libs\spine-skeletonviewer-4.2.13-SNAPSHOT
 - 同名动画时长差异
 - timeline 数量差异
 - 更细的属性级差异
-- 更清晰的分组展示和颜色标识
-- 打包为更易分发的启动方式
+- 根据 A / B 差异生成合并候选文件 C
+- Windows 侧正式打包为更易分发的启动方式

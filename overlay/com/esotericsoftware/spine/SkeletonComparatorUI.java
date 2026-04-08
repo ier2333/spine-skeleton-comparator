@@ -16,18 +16,28 @@ import java.util.List;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.files.FileHandle;
+import com.badlogic.gdx.graphics.Texture.TextureFilter;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.Stage;
+import com.badlogic.gdx.scenes.scene2d.ui.Label.LabelStyle;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.ScrollPane;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
+import com.badlogic.gdx.scenes.scene2d.ui.TextButton.TextButtonStyle;
 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+import com.badlogic.gdx.scenes.scene2d.ui.Window.WindowStyle;
 import com.badlogic.gdx.scenes.scene2d.ui.WidgetGroup;
 import com.badlogic.gdx.scenes.scene2d.ui.Window;
+import com.badlogic.gdx.scenes.scene2d.InputEvent;
+import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.utils.Align;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
+import com.badlogic.gdx.graphics.g2d.BitmapFont;
+import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator;
+import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator.FreeTypeFontParameter;
 import com.esotericsoftware.spine.SkeletonComparatorDiff.BoneParentChange;
 import com.esotericsoftware.spine.SkeletonComparatorDiff.CompareResult;
 import com.esotericsoftware.spine.SkeletonComparatorDiff.LoadedSkeletonInfo;
@@ -38,16 +48,26 @@ class SkeletonComparatorUI {
 	Stage stage = new Stage(new ScreenViewport());
 	com.badlogic.gdx.scenes.scene2d.ui.Skin skin = new com.badlogic.gdx.scenes.scene2d.ui.Skin(
 		Gdx.files.internal("skin/skin.json"));
+	FreeTypeFontGenerator fontGenerator;
+	BitmapFont generatedFont;
 
 	Window window = new Window("Skeleton Comparator", skin);
 	Table root = new Table(skin);
 	WidgetGroup toasts = new WidgetGroup();
 
-	TextButton openAButton = new TextButton("Open A", skin);
 	TextButton reloadAButton = new TextButton("Reload A", skin);
-	TextButton openBButton = new TextButton("Open B", skin);
 	TextButton reloadBButton = new TextButton("Reload B", skin);
-	TextButton reloadBothButton = new TextButton("Reload Both", skin);
+	TextButton languageButton = new TextButton("CH / EN", skin);
+
+	Label loadedFilesSectionTitle = new Label("", skin, "title");
+	Label summarySectionTitle = new Label("", skin, "title");
+	Label animationSectionTitle = new Label("", skin, "title");
+	Label boneSectionTitle = new Label("", skin, "title");
+
+	Label fileATitleLabel = new Label("", skin, "title");
+	Label fileAHintLabel = new Label("", skin);
+	Label fileBTitleLabel = new Label("", skin, "title");
+	Label fileBHintLabel = new Label("", skin);
 
 	Label fileALabel = new Label("", skin);
 	Label fileBLabel = new Label("", skin);
@@ -65,15 +85,44 @@ class SkeletonComparatorUI {
 	Table bonesOnlyATable = new Table(skin);
 	Table bonesOnlyBTable = new Table(skin);
 	Table bonesChangedTable = new Table(skin);
+	Table fileACard = new Table(skin);
+	Table fileBCard = new Table(skin);
+	Table boneContent = new Table(skin);
+	Table boneTop = new Table(skin);
+	Table bonesChangedSection = new Table(skin);
+	Table summarySectionCard;
+	Table animationSectionCard;
+	Table boneSectionCard;
+
+	long flashAUntilMs;
+	long flashBUntilMs;
+	long flashAnimationUntilMs;
+	long flashBoneUntilMs;
+	boolean lastHighlightA;
+	boolean lastHighlightB;
+	boolean lastHighlightAnimation;
+	boolean lastHighlightBone;
+
+	static final Color DROP_BASE_A = new Color(0.15f, 0.24f, 0.33f, 0.95f);
+	static final Color DROP_BASE_B = new Color(0.15f, 0.30f, 0.23f, 0.95f);
+	static final Color DROP_HOVER_A = new Color(0.20f, 0.42f, 0.62f, 1f);
+	static final Color DROP_HOVER_B = new Color(0.18f, 0.52f, 0.36f, 1f);
+	static final Color DROP_FLASH_A = new Color(0.23f, 0.52f, 0.86f, 1f);
+	static final Color DROP_FLASH_B = new Color(0.22f, 0.68f, 0.43f, 1f);
+	static final Color SECTION_BASE = new Color(0.12f, 0.13f, 0.16f, 0.92f);
+	static final Color SECTION_FLASH = new Color(0.45f, 0.37f, 0.10f, 0.95f);
 
 	SkeletonComparatorUI (SkeletonComparator comparator) {
 		this.comparator = comparator;
 		initialize();
 		layout();
 		events();
+		refreshLanguage();
 	}
 
 	private void initialize () {
+		installChineseCapableFont();
+		applyWidgetStyles();
 		skin.getFont("default").getData().markupEnabled = true;
 
 		window.setMovable(false);
@@ -89,6 +138,12 @@ class SkeletonComparatorUI {
 		fileBLabel.setAlignment(Align.left);
 		fileALabel.setWrap(true);
 		fileBLabel.setWrap(true);
+		fileAHintLabel.setWrap(true);
+		fileBHintLabel.setWrap(true);
+		fileAHintLabel.setColor(0.82f, 0.90f, 1f, 1f);
+		fileBHintLabel.setColor(0.83f, 1f, 0.88f, 1f);
+		reloadAButton.padLeft(8).padRight(8);
+		reloadBButton.padLeft(8).padRight(8);
 
 		animationsOnlyATitle.setColor(Color.WHITE);
 		animationsOnlyBTitle.setColor(Color.WHITE);
@@ -101,17 +156,20 @@ class SkeletonComparatorUI {
 		configureListTable(bonesOnlyATable);
 		configureListTable(bonesOnlyBTable);
 		configureListTable(bonesChangedTable);
+		applyDropTargetStyles(false, false);
 	}
 
 	private void layout () {
 		root.defaults().pad(8);
 		root.top().left();
 
-		root.add(topButtons()).growX().fillX().row();
 		root.add(fileSection()).growX().fillX().row();
-		root.add(section("Summary", wrap(summaryLabel))).growX().fillX().row();
-		root.add(animationSection()).growX().fillX().row();
-		root.add(boneSection()).grow().fill().row();
+		summarySectionCard = section(summarySectionTitle, wrap(summaryLabel));
+		animationSectionCard = section(animationSectionTitle, animationSection());
+		boneSectionCard = section(boneSectionTitle, boneSection());
+		root.add(summarySectionCard).growX().fillX().row();
+		root.add(animationSectionCard).growX().fillX().row();
+		root.add(boneSectionCard).grow().fill().row();
 		root.add(statusLabel).growX().fillX().row();
 
 		window.add(root).grow();
@@ -124,23 +182,34 @@ class SkeletonComparatorUI {
 		stage.addActor(toastHost);
 	}
 
-	private Table topButtons () {
-		Table table = new Table(skin);
-		table.defaults().padRight(6).left();
-		table.add(openAButton);
-		table.add(reloadAButton);
-		table.add(openBButton);
-		table.add(reloadBButton);
-		table.add(reloadBothButton);
-		return table;
-	}
-
 	private Table fileSection () {
 		Table table = new Table(skin);
 		table.defaults().pad(6).top().left();
-		table.add(fileCard("Skeleton A", fileALabel)).growX().fillX().top();
-		table.add(fileCard("Skeleton B", fileBLabel)).growX().fillX().top();
-		return section("Loaded Files", table);
+		table.add(fileSectionHeader()).growX().fillX().colspan(2).row();
+		fileACard = fileCard(fileATitleLabel, fileAHintLabel, fileALabel);
+		fileBCard = fileCard(fileBTitleLabel, fileBHintLabel, fileBLabel);
+		table.add(fileACard).growX().fillX().top();
+		table.add(fileBCard).growX().fillX().top();
+		return table;
+	}
+
+	private Table fileSectionHeader () {
+		Table header = new Table(skin);
+		header.defaults().pad(6).left();
+		header.add(loadedFilesSectionTitle).left();
+		header.add().growX();
+		header.add(languageButton).width(78).right().padRight(6);
+		return header;
+	}
+
+	private Table boneSection () {
+		boneTop.defaults().pad(6).top();
+		boneTop.add(listSection(bonesOnlyATitle, bonesOnlyATable)).grow().fill();
+		boneTop.add(listSection(bonesOnlyBTitle, bonesOnlyBTable)).grow().fill();
+		bonesChangedSection = listSection(bonesChangedTitle, bonesChangedTable);
+		boneContent.defaults().pad(6).grow().fill();
+		rebuildBoneSection(false);
+		return boneContent;
 	}
 
 	private Table animationSection () {
@@ -151,27 +220,21 @@ class SkeletonComparatorUI {
 		content.defaults().pad(6).top();
 		content.add(left).grow().fill();
 		content.add(right).grow().fill();
-		return section("Animation Differences", content);
+		return content;
 	}
 
-	private Table boneSection () {
-		Table top = new Table(skin);
-		top.defaults().pad(6).top();
-		top.add(listSection(bonesOnlyATitle, bonesOnlyATable)).grow().fill();
-		top.add(listSection(bonesOnlyBTitle, bonesOnlyBTable)).grow().fill();
-
-		Table content = new Table(skin);
-		content.defaults().pad(6).grow().fill();
-		content.add(top).growX().fillX().row();
-		content.add(listSection(bonesChangedTitle, bonesChangedTable)).grow().fill();
-		return section("Bone Differences", content);
-	}
-
-	private Table fileCard (String title, Label valueLabel) {
+	private Table fileCard (Label titleLabel, Label hintLabel, Label valueLabel) {
 		Table table = new Table(skin);
 		table.defaults().left().growX();
-		table.add(new Label(title, skin)).row();
-		table.add(wrap(valueLabel)).fillX();
+		table.pad(12);
+		Table header = new Table(skin);
+		header.defaults().left().padBottom(4);
+		header.add(titleLabel).left();
+		header.add().growX();
+		header.add(titleLabel == fileATitleLabel ? createReloadControl(true) : createReloadControl(false)).right().width(96);
+		table.add(header).growX().fillX().row();
+		table.add(hintLabel).fillX().padTop(4).row();
+		table.add(wrap(valueLabel)).fillX().padTop(8);
 		return table;
 	}
 
@@ -185,10 +248,11 @@ class SkeletonComparatorUI {
 		return table;
 	}
 
-	private Table section (String title, Actor content) {
+	private Table section (Label titleLabel, Actor content) {
 		Table table = new Table(skin);
 		table.defaults().pad(6).left().growX();
-		table.add(new Label(title, skin)).row();
+		table.pad(6);
+		table.add(titleLabel).row();
 		table.add(content).grow().fill();
 		return table;
 	}
@@ -205,31 +269,45 @@ class SkeletonComparatorUI {
 	}
 
 	private void events () {
-		openAButton.addListener(new ChangeListener() {
-			public void changed (ChangeEvent event, Actor actor) {
+		fileACard.addListener(new ClickListener() {
+			public void clicked (InputEvent event, float x, float y) {
+				if (event.getTarget() != null && event.getTarget().isDescendantOf(reloadAButton)) return;
 				FileHandle file = chooseSkeletonFile();
-				if (file != null) comparator.loadSkeleton(true, file);
+				if (file != null) comparator.requestLoadSkeleton(true, file, false);
 			}
 		});
-		reloadAButton.addListener(new ChangeListener() {
-			public void changed (ChangeEvent event, Actor actor) {
+		reloadAButton.addListener(new ClickListener() {
+			public boolean touchDown (InputEvent event, float x, float y, int pointer, int button) {
+				event.stop();
+				return super.touchDown(event, x, y, pointer, button);
+			}
+
+			public void clicked (InputEvent event, float x, float y) {
+				event.stop();
 				comparator.reloadSkeleton(true);
 			}
 		});
-		openBButton.addListener(new ChangeListener() {
-			public void changed (ChangeEvent event, Actor actor) {
+		fileBCard.addListener(new ClickListener() {
+			public void clicked (InputEvent event, float x, float y) {
+				if (event.getTarget() != null && event.getTarget().isDescendantOf(reloadBButton)) return;
 				FileHandle file = chooseSkeletonFile();
-				if (file != null) comparator.loadSkeleton(false, file);
+				if (file != null) comparator.requestLoadSkeleton(false, file, false);
 			}
 		});
-		reloadBButton.addListener(new ChangeListener() {
-			public void changed (ChangeEvent event, Actor actor) {
+		reloadBButton.addListener(new ClickListener() {
+			public boolean touchDown (InputEvent event, float x, float y, int pointer, int button) {
+				event.stop();
+				return super.touchDown(event, x, y, pointer, button);
+			}
+
+			public void clicked (InputEvent event, float x, float y) {
+				event.stop();
 				comparator.reloadSkeleton(false);
 			}
 		});
-		reloadBothButton.addListener(new ChangeListener() {
+		languageButton.addListener(new ChangeListener() {
 			public void changed (ChangeEvent event, Actor actor) {
-				comparator.reloadBoth();
+				comparator.toggleLanguage();
 			}
 		});
 
@@ -237,7 +315,7 @@ class SkeletonComparatorUI {
 	}
 
 	private FileHandle chooseSkeletonFile () {
-		FileDialog fileDialog = new FileDialog((Frame)null, "Choose skeleton file");
+		FileDialog fileDialog = new FileDialog((Frame)null, comparator.t("Choose skeleton file", "选择 skeleton 文件"));
 		fileDialog.setMode(FileDialog.LOAD);
 		fileDialog.setVisible(true);
 		String name = fileDialog.getFile();
@@ -247,56 +325,100 @@ class SkeletonComparatorUI {
 	}
 
 	void setLoadedFiles (LoadedSkeletonInfo skeletonA, LoadedSkeletonInfo skeletonB) {
-		fileALabel.setText(formatFileInfo(skeletonA, "Waiting for file A"));
-		fileBLabel.setText(formatFileInfo(skeletonB, "Waiting for file B"));
+		fileALabel.setText(formatFileInfo(skeletonA, comparator.t("Waiting for file A", "等待文件 A")));
+		fileBLabel.setText(formatFileInfo(skeletonB, comparator.t("Waiting for file B", "等待文件 B")));
 	}
 
 	void showWaitingState (LoadedSkeletonInfo skeletonA, LoadedSkeletonInfo skeletonB) {
 		setLoadedFiles(skeletonA, skeletonB);
-		setStatus("Drop two skeleton files or use Open A / Open B.");
+		setStatus(comparator.t("Drop files into the left or right area, or click either card to browse.",
+			"将文件拖到左侧或右侧区域，或直接点击任一卡片选择文件。"));
 		if (skeletonA == null && skeletonB == null)
-			summaryLabel.setText("Load two Spine skeleton files to compare animations and bones.");
+			summaryLabel.setText(comparator.t("Load two Spine skeleton files to compare animations and bones.",
+				"加载两个 Spine skeleton 文件后，即可比较动画和骨骼。"));
 		else if (skeletonA == null)
-			summaryLabel.setText("Skeleton B is loaded. Waiting for Skeleton A.");
+			summaryLabel.setText(comparator.t("Skeleton B is loaded. Waiting for Skeleton A.",
+				"骨骼 B 已加载，等待骨骼 A。"));
 		else
-			summaryLabel.setText("Skeleton A is loaded. Waiting for Skeleton B.");
+			summaryLabel.setText(comparator.t("Skeleton A is loaded. Waiting for Skeleton B.",
+				"骨骼 A 已加载，等待骨骼 B。"));
 
-		setTitle(animationsOnlyATitle, "A only", 0);
-		setTitle(animationsOnlyBTitle, "B only", 0);
-		setTitle(bonesOnlyATitle, "A only", 0);
-		setTitle(bonesOnlyBTitle, "B only", 0);
-		setTitle(bonesChangedTitle, "Parent changed", 0);
+		setTitle(animationsOnlyATitle, "A only", "仅 A 包含", 0);
+		setTitle(animationsOnlyBTitle, "B only", "仅 B 包含", 0);
+		setTitle(bonesOnlyATitle, "A only", "仅 A 包含", 0);
+		setTitle(bonesOnlyBTitle, "B only", "仅 B 包含", 0);
+		setTitle(bonesChangedTitle, "Parent changed", "父级变化", 0);
 		fillLines(animationsOnlyATable, null);
 		fillLines(animationsOnlyBTable, null);
 		fillLines(bonesOnlyATable, null);
 		fillLines(bonesOnlyBTable, null);
 		fillLines(bonesChangedTable, null);
+		rebuildBoneSection(false);
+		flashDifferenceSections(false, false);
 	}
 
 	void showCompareResult (CompareResult result) {
 		setLoadedFiles(result.skeletonA, result.skeletonB);
-		summaryLabel.setText(result.summaryText());
-		setStatus("Comparison updated.");
+		summaryLabel.setText(result.summaryText(comparator.isChinese()));
+		setStatus(comparator.t("Comparison updated. Drop to the left or right area to replace A or B.",
+			"对比结果已更新。拖到左侧或右侧区域可替换 A 或 B。"));
 
-		setTitle(animationsOnlyATitle, "Animations only in A", result.animationsOnlyInA.size());
-		setTitle(animationsOnlyBTitle, "Animations only in B", result.animationsOnlyInB.size());
-		setTitle(bonesOnlyATitle, "Bones only in A", result.bonesOnlyInA.size());
-		setTitle(bonesOnlyBTitle, "Bones only in B", result.bonesOnlyInB.size());
-		setTitle(bonesChangedTitle, "Same bone, different parent", result.bonesParentChanged.size());
+		setTitle(animationsOnlyATitle, "Animations only in A", "仅 A 的动画", result.animationsOnlyInA.size());
+		setTitle(animationsOnlyBTitle, "Animations only in B", "仅 B 的动画", result.animationsOnlyInB.size());
+		setTitle(bonesOnlyATitle, "Bones only in A", "仅 A 的骨骼", result.bonesOnlyInA.size());
+		setTitle(bonesOnlyBTitle, "Bones only in B", "仅 B 的骨骼", result.bonesOnlyInB.size());
+		setTitle(bonesChangedTitle, "Same bone, different parent", "同名骨骼父级不同", result.bonesParentChanged.size());
 
 		fillLines(animationsOnlyATable, result.animationsOnlyInA);
 		fillLines(animationsOnlyBTable, result.animationsOnlyInB);
 		fillLines(bonesOnlyATable, result.bonesOnlyInA);
 		fillLines(bonesOnlyBTable, result.bonesOnlyInB);
 		fillBoneChanges(bonesChangedTable, result.bonesParentChanged);
+		rebuildBoneSection(!result.bonesParentChanged.isEmpty());
+		flashDifferenceSections(!result.animationsOnlyInA.isEmpty() || !result.animationsOnlyInB.isEmpty(),
+			!result.bonesOnlyInA.isEmpty() || !result.bonesOnlyInB.isEmpty() || !result.bonesParentChanged.isEmpty());
 	}
 
 	void setStatus (String text) {
 		statusLabel.setText(text);
 	}
 
+	void refreshLanguage () {
+		window.getTitleLabel().setText(comparator.t("Skeleton Comparator", "骨骼对比器"));
+		reloadAButton.setText(loadingText(true));
+		reloadBButton.setText(loadingText(false));
+		languageButton.setText(comparator.isChinese() ? "CH / EN" : "EN / CH");
+
+		loadedFilesSectionTitle.setText(comparator.t("Loaded Files", "已加载文件"));
+		summarySectionTitle.setText(comparator.t("Summary", "摘要"));
+		animationSectionTitle.setText(comparator.t("Animation Differences", "动画差异"));
+		boneSectionTitle.setText(comparator.t("Bone Differences", "骨骼差异"));
+
+		fileATitleLabel.setText(comparator.t("Skeleton A", "骨骼 A"));
+		fileBTitleLabel.setText(comparator.t("Skeleton B", "骨骼 B"));
+		fileAHintLabel.setText(comparator.t("Drop here to load as A, or click to browse.\nDrop target: A",
+			"可拖拽至此，作为 A 读取，或点击选择文件。"));
+		fileBHintLabel.setText(comparator.t("Drop here to load as B, or click to browse.\nDrop target: B",
+			"可拖拽至此，作为 B 读取，或点击选择文件。"));
+	}
+
+	boolean preferLoadAForDrop () {
+		Vector2 stagePoint = stage.screenToStageCoordinates(new Vector2(Gdx.input.getX(), Gdx.input.getY()));
+		float midpoint = stage.getViewport().getWorldWidth() / 2f;
+		return stagePoint.x <= midpoint;
+	}
+
+	void flashDropTargets (boolean highlightA, boolean highlightB) {
+		long flashUntil = System.currentTimeMillis() + 900;
+		if (highlightA) flashAUntilMs = flashUntil;
+		if (highlightB) flashBUntilMs = flashUntil;
+		applyDropTargetStyles(isFlashingA(), isFlashingB());
+	}
+
 	void toast (String text) {
 		Table table = new Table(skin);
+		table.setBackground(skin.newDrawable("white", new Color(0.10f, 0.10f, 0.10f, 0.92f)));
+		table.pad(10);
 		table.add(new Label(text, skin));
 		table.getColor().a = 0;
 		table.pack();
@@ -309,8 +431,19 @@ class SkeletonComparatorUI {
 	}
 
 	void render () {
+		boolean hoverA = isPointerOver(fileACard);
+		boolean hoverB = isPointerOver(fileBCard);
+		applyDropTargetStyles(hoverA || isFlashingA(), hoverB || isFlashingB());
+		applyDifferenceSectionStyles(isFlashingAnimation(), isFlashingBone());
 		stage.act();
 		stage.draw();
+	}
+
+	void setLoading (boolean loadA, boolean loading, boolean reloading) {
+		TextButton button = loadA ? reloadAButton : reloadBButton;
+		button.setDisabled(loading);
+		button.setText(loading ? (reloading ? comparator.t("Reloading", "刷新中") : comparator.t("Loading", "加载中"))
+			: comparator.t("Reload", "刷新"));
 	}
 
 	void resize (int width, int height) {
@@ -320,13 +453,15 @@ class SkeletonComparatorUI {
 
 	void dispose () {
 		stage.dispose();
+		if (generatedFont != null) generatedFont.dispose();
+		if (fontGenerator != null) fontGenerator.dispose();
 		skin.dispose();
 	}
 
 	private void fillLines (Table table, List<String> lines) {
 		table.clearChildren();
 		if (lines == null || lines.isEmpty()) {
-			table.add(new Label("None", skin)).left().row();
+			table.add(new Label(comparator.t("None", "无"), skin)).left().row();
 			return;
 		}
 		for (String line : lines)
@@ -336,7 +471,7 @@ class SkeletonComparatorUI {
 	private void fillBoneChanges (Table table, List<BoneParentChange> changes) {
 		table.clearChildren();
 		if (changes == null || changes.isEmpty()) {
-			table.add(new Label("None", skin)).left().row();
+			table.add(new Label(comparator.t("None", "无"), skin)).left().row();
 			return;
 		}
 		for (BoneParentChange change : changes) {
@@ -345,12 +480,12 @@ class SkeletonComparatorUI {
 		}
 	}
 
-	private void setTitle (Label label, String title, int count) {
-		label.setText(title + " (" + count + ")");
+	private void setTitle (Label label, String english, String chinese, int count) {
+		label.setText(comparator.t(english, chinese) + " (" + count + ")");
 	}
 
 	private String formatParent (String parentName) {
-		return parentName == null ? "<root>" : parentName;
+		return parentName == null ? comparator.t("<root>", "<根骨骼>") : parentName;
 	}
 
 	private String formatFileInfo (LoadedSkeletonInfo skeletonInfo, String fallback) {
@@ -360,10 +495,140 @@ class SkeletonComparatorUI {
 		text.append('\n');
 		text.append(skeletonInfo.file.path());
 		text.append('\n');
-		text.append("Animations: ");
+		text.append(comparator.t("Animations: ", "动画: "));
 		text.append(skeletonInfo.animationNames.size());
-		text.append(" | Bones: ");
+		text.append(comparator.t(" | Bones: ", " | 骨骼: "));
 		text.append(skeletonInfo.boneParents.size());
 		return text.toString();
+	}
+
+	private void rebuildBoneSection (boolean showParentChanges) {
+		boneContent.clearChildren();
+		boneContent.add(boneTop).growX().fillX().row();
+		if (showParentChanges) boneContent.add(bonesChangedSection).grow().fill();
+	}
+
+	private boolean isFlashingA () {
+		return System.currentTimeMillis() < flashAUntilMs;
+	}
+
+	private boolean isFlashingB () {
+		return System.currentTimeMillis() < flashBUntilMs;
+	}
+
+	private boolean isFlashingAnimation () {
+		return System.currentTimeMillis() < flashAnimationUntilMs;
+	}
+
+	private boolean isFlashingBone () {
+		return System.currentTimeMillis() < flashBoneUntilMs;
+	}
+
+	private void applyDropTargetStyles (boolean highlightA, boolean highlightB) {
+		if (fileACard == null || fileBCard == null) return;
+		if (fileACard.getBackground() != null && fileBCard.getBackground() != null
+			&& lastHighlightA == highlightA && lastHighlightB == highlightB) return;
+		lastHighlightA = highlightA;
+		lastHighlightB = highlightB;
+		fileACard.setBackground(skin.newDrawable("white", highlightA ? (isFlashingA() ? DROP_FLASH_A : DROP_HOVER_A) : DROP_BASE_A));
+		fileBCard.setBackground(skin.newDrawable("white", highlightB ? (isFlashingB() ? DROP_FLASH_B : DROP_HOVER_B) : DROP_BASE_B));
+	}
+
+	private void applyDifferenceSectionStyles (boolean highlightAnimation, boolean highlightBone) {
+		if (animationSectionCard != null) {
+			if (animationSectionCard.getBackground() == null || lastHighlightAnimation != highlightAnimation) {
+				lastHighlightAnimation = highlightAnimation;
+				animationSectionCard.setBackground(skin.newDrawable("white", highlightAnimation ? SECTION_FLASH : SECTION_BASE));
+			}
+		}
+		if (boneSectionCard != null) {
+			if (boneSectionCard.getBackground() == null || lastHighlightBone != highlightBone) {
+				lastHighlightBone = highlightBone;
+				boneSectionCard.setBackground(skin.newDrawable("white", highlightBone ? SECTION_FLASH : SECTION_BASE));
+			}
+		}
+		if (summarySectionCard != null && summarySectionCard.getBackground() == null)
+			summarySectionCard.setBackground(skin.newDrawable("white", SECTION_BASE));
+	}
+
+	private boolean isPointerOver (Actor actor) {
+		if (actor == null || !actor.isVisible()) return false;
+		Vector2 stagePoint = stage.screenToStageCoordinates(new Vector2(Gdx.input.getX(), Gdx.input.getY()));
+		Vector2 origin = actor.localToStageCoordinates(new Vector2(0, 0));
+		return stagePoint.x >= origin.x && stagePoint.x <= origin.x + actor.getWidth() && stagePoint.y >= origin.y
+			&& stagePoint.y <= origin.y + actor.getHeight();
+	}
+
+	private void flashDifferenceSections (boolean flashAnimation, boolean flashBone) {
+		long flashUntil = System.currentTimeMillis() + 1400;
+		if (flashAnimation) flashAnimationUntilMs = flashUntil;
+		if (flashBone) flashBoneUntilMs = flashUntil;
+		applyDifferenceSectionStyles(isFlashingAnimation(), isFlashingBone());
+	}
+
+	private void applyWidgetStyles () {
+		window.setStyle(skin.get(WindowStyle.class));
+		LabelStyle defaultLabelStyle = skin.get(LabelStyle.class);
+		LabelStyle titleLabelStyle = skin.get("title", LabelStyle.class);
+		TextButtonStyle defaultButtonStyle = skin.get(TextButtonStyle.class);
+
+		loadedFilesSectionTitle.setStyle(titleLabelStyle);
+		summarySectionTitle.setStyle(titleLabelStyle);
+		animationSectionTitle.setStyle(titleLabelStyle);
+		boneSectionTitle.setStyle(titleLabelStyle);
+		fileATitleLabel.setStyle(titleLabelStyle);
+		fileAHintLabel.setStyle(defaultLabelStyle);
+		fileBTitleLabel.setStyle(titleLabelStyle);
+		fileBHintLabel.setStyle(defaultLabelStyle);
+		fileALabel.setStyle(defaultLabelStyle);
+		fileBLabel.setStyle(defaultLabelStyle);
+		statusLabel.setStyle(defaultLabelStyle);
+		summaryLabel.setStyle(defaultLabelStyle);
+		animationsOnlyATitle.setStyle(defaultLabelStyle);
+		animationsOnlyBTitle.setStyle(defaultLabelStyle);
+		bonesOnlyATitle.setStyle(defaultLabelStyle);
+		bonesOnlyBTitle.setStyle(defaultLabelStyle);
+		bonesChangedTitle.setStyle(defaultLabelStyle);
+
+		reloadAButton.setStyle(defaultButtonStyle);
+		reloadBButton.setStyle(defaultButtonStyle);
+		languageButton.setStyle(defaultButtonStyle);
+	}
+
+	private Table createReloadControl (boolean loadA) {
+		Table container = new Table(skin);
+		container.defaults().left();
+		container.add(loadA ? reloadAButton : reloadBButton).width(96).height(26);
+		return container;
+	}
+
+	private String loadingText (boolean loadA) {
+		if (!comparator.isLoading(loadA)) return comparator.t("Reload", "刷新");
+		return comparator.isReloading(loadA) ? comparator.t("Reloading", "刷新中") : comparator.t("Loading", "加载中");
+	}
+
+	private void installChineseCapableFont () {
+		FileHandle fontFile = Gdx.files.internal("skin/NotoSansSC-Regular.otf");
+		if (!fontFile.exists()) return;
+		try {
+			fontGenerator = new FreeTypeFontGenerator(fontFile);
+			FreeTypeFontParameter parameter = new FreeTypeFontParameter();
+			parameter.size = Math.round(14 * SkeletonComparator.uiScale);
+			parameter.incremental = true;
+			parameter.hinting = FreeTypeFontGenerator.Hinting.Slight;
+			parameter.minFilter = TextureFilter.Linear;
+			parameter.magFilter = TextureFilter.Linear;
+			generatedFont = fontGenerator.generateFont(parameter);
+			generatedFont.getData().markupEnabled = true;
+
+			skin.get(LabelStyle.class).font = generatedFont;
+			skin.get("title", LabelStyle.class).font = generatedFont;
+			skin.get(TextButtonStyle.class).font = generatedFont;
+			skin.get("toggle", TextButtonStyle.class).font = generatedFont;
+			skin.get(WindowStyle.class).titleFont = generatedFont;
+		} catch (Throwable ex) {
+			System.out.println("Failed to install Chinese font.");
+			ex.printStackTrace();
+		}
 	}
 }
