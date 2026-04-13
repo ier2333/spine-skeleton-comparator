@@ -49,13 +49,16 @@ npm run build
 
 ## Cloudflare Pages 部署建议
 
-推荐直接把当前仓库作为一个 Cloudflare Pages 项目部署。
+推荐直接把当前仓库连接到 Cloudflare 的 Git 自动构建。
 
 建议配置：
 
 - Framework preset: `Vite`
 - Build command: `npm run build`
 - Output directory: `dist`
+- Root directory: `/`
+
+如果 Cloudflare 后台已经统一到 Workers 构建流，仓库根目录中已包含 `wrangler.jsonc`，可直接使用默认部署命令 `npx wrangler deploy`。
 
 当前项目已经配置为相对路径构建，适合直接部署，也更方便将来挂到子目录下。
 
