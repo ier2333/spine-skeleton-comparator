@@ -15,15 +15,22 @@ class App {
   private axisColor = new spine.Color(0, 0, 0, 0.55);
   private showAxes: boolean = true;
   private usePremultipliedAlpha: boolean = false;
+  private showBoneLabels: boolean = false;
+  private boneLabelsOverlay: HTMLDivElement | null = null;
+  private labelMeasureContext: CanvasRenderingContext2D | null = null;
+  private lastBoneLabelLayoutKey: string = "";
 
   skeleton: spine.Skeleton | null = null;
   animationState: spine.AnimationState | null = null;
   skeletonData: spine.SkeletonData | null = null;
   activeAnimName: string = "";
+  selectedBoneName: string = "";
   selectedSlotIndex: number = -1;
   showBones: boolean = false;
   showNonEmptySlotsOnly: boolean = false;
+  boneSearchQuery: string = "";
   nonEmptySlotIndices: Set<number> = new Set();
+  collapsedBoneNames: Set<string> = new Set();
   private isRendering: boolean = false;
   private shapesEnabledThisFrame: boolean = false;
   private baseZoom: number = 1;
@@ -58,6 +65,7 @@ class App {
 
   initialize(canvas: SpineCanvas) {
     this.spineCanvas = canvas;
+    this.ensureBoneLabelsOverlay();
     this.applyBackground();
     this.updateViewerCaption();
   }
@@ -84,8 +92,10 @@ class App {
     this.skeletonData = null;
     this.animationState = null;
     this.selectedSlotIndex = -1;
+    this.selectedBoneName = "";
     this.activeAnimName = "";
     this.statusMessage = "";
+    this.collapsedBoneNames.clear();
 
     const files = Array.from(fileList);
     const isBinarySkeletonFile = (name: string) => name.endsWith(".skel") || name.endsWith(".skel.bytes");
@@ -343,10 +353,15 @@ class App {
 
   private wireFileInput() {
     const fileInput = el("file-input", this.id) as HTMLInputElement;
+    const boneSearch = el("bone-search", this.id) as HTMLInputElement;
     fileInput.addEventListener("change", () => {
       if (fileInput.files && fileInput.files.length > 0) {
         this.loadFile(fileInput.files);
       }
+    });
+    boneSearch.addEventListener("input", () => {
+      this.boneSearchQuery = boneSearch.value.trim().toLowerCase();
+      this.populateBones();
     });
   }
 
@@ -388,7 +403,16 @@ class App {
   // ── Toggles ─────────────────────────────────────────────────────
 
   private wireToggles() {
+    const toggleBoneLabelsBtn = el("toggle-bone-labels", this.id) as HTMLButtonElement;
     const toggleBonesBtn = el("toggle-bones", this.id) as HTMLButtonElement;
+    toggleBoneLabelsBtn.addEventListener("click", () => {
+      this.showBoneLabels = !this.showBoneLabels;
+      toggleBoneLabelsBtn.classList.toggle("on", this.showBoneLabels);
+      this.invalidateBoneLabels();
+      if (!this.showBoneLabels) this.clearBoneLabels();
+      this.updateToolbarTitles();
+      this.highlightSelectedBone();
+    });
     toggleBonesBtn.addEventListener("click", () => {
       this.showBones = !this.showBones;
       toggleBonesBtn.classList.toggle("on", this.showBones);
@@ -428,11 +452,13 @@ class App {
     const backgroundButton = el("bg-btn", this.id) as HTMLButtonElement;
     const crosshairButton = el("crosshair-btn", this.id) as HTMLButtonElement;
     const alphaButton = el("alpha-btn", this.id) as HTMLButtonElement;
+    const boneLabelsButton = el("toggle-bone-labels", this.id) as HTMLButtonElement;
     loadButton.title = "加载 .skel / .atlas / .png";
     clearButton.title = "清除当前 viewer";
     backgroundButton.title = `背景色: ${this.backgroundPalette[this.backgroundIndex].label}`;
     crosshairButton.title = `十字线: ${this.showAxes ? "开" : "关"}`;
     alphaButton.title = `预乘 alpha: ${this.usePremultipliedAlpha ? "开" : "关"}`;
+    boneLabelsButton.title = `骨骼名称: ${this.showBoneLabels ? "开（动画暂停）" : "关"}`;
     crosshairButton.classList.toggle("on", this.showAxes);
     alphaButton.classList.toggle("on", this.usePremultipliedAlpha);
   }
@@ -461,9 +487,16 @@ class App {
     this.skeletonData = null;
     this.activeAnimName = "";
     this.currentFileName = "";
+    this.selectedBoneName = "";
     this.selectedSlotIndex = -1;
     this.nonEmptySlotIndices.clear();
+    this.collapsedBoneNames.clear();
+    this.boneSearchQuery = "";
     this.statusMessage = "";
+    this.showBoneLabels = false;
+    this.clearBoneLabels();
+    (el("toggle-bone-labels", this.id) as HTMLButtonElement).classList.remove("on");
+    (el("bone-search", this.id) as HTMLInputElement).value = "";
 
     (el("anim-list", this.id) as HTMLElement).innerHTML = "";
     (el("bone-list", this.id) as HTMLElement).innerHTML = "";
@@ -473,6 +506,7 @@ class App {
     (el("bone-count", this.id) as HTMLElement).textContent = "0";
     (el("slot-count", this.id) as HTMLElement).textContent = "0";
     this.updateViewerCaption();
+    this.updateToolbarTitles();
     refreshComparisonViews();
   }
 
@@ -555,16 +589,56 @@ class App {
     const list = el("bone-list", this.id);
     const countEl = el("bone-count", this.id);
     const allBones = this.skeletonData!.bones;
-    const displayedBones = compareMode ? allBones.filter(bone => !this.getPeerBoneNames().has(bone.name)) : allBones;
-    countEl.textContent = compareMode ? `${displayedBones.length}/${allBones.length}` : String(allBones.length);
+    const compareVisibleBoneNames = new Set(
+      compareMode ? allBones.filter(bone => !this.getPeerBoneNames().has(bone.name)).map(bone => bone.name) : allBones.map(bone => bone.name)
+    );
+    const visibleBoneNames = this.applyBoneSearchFilter(allBones, compareVisibleBoneNames);
+    const displayedBones = allBones.filter(bone => visibleBoneNames.has(bone.name));
+    countEl.textContent = compareMode ? `${displayedBones.length}/${allBones.length}` : String(displayedBones.length);
     list.innerHTML = "";
     this.setDetailSectionHighlight("bone-list", compareMode && displayedBones.length > 0);
-    displayedBones.forEach(bone => {
+    this.getVisibleBoneTreeRows(allBones, visibleBoneNames).forEach(row => {
+      const bone = row.bone;
       const li = document.createElement("li");
-      li.className = "item";
-      li.innerHTML = `<span class="list-item-content"><span class="list-item-bullet">•</span><span>${bone.name}</span></span>`;
+      li.className = "item tree-item";
+      li.dataset.boneName = bone.name;
+
+      const rowEl = document.createElement("div");
+      rowEl.className = "tree-row";
+      rowEl.style.paddingLeft = `${row.depth * 14}px`;
+
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = row.hasVisibleChildren ? "tree-toggle" : "tree-toggle spacer";
+      toggle.textContent = row.hasVisibleChildren
+        ? (this.collapsedBoneNames.has(bone.name) ? "▸" : "▾")
+        : "•";
+      if (row.hasVisibleChildren) {
+        toggle.addEventListener("click", event => {
+          event.stopPropagation();
+          if (this.collapsedBoneNames.has(bone.name)) this.collapsedBoneNames.delete(bone.name);
+          else this.collapsedBoneNames.add(bone.name);
+          this.populateBones();
+        });
+      } else {
+        toggle.disabled = true;
+      }
+
+      const label = document.createElement("span");
+      label.className = "tree-label";
+      label.innerHTML = `<span>${bone.name}</span>`;
+      rowEl.appendChild(toggle);
+      rowEl.appendChild(label);
+      li.appendChild(rowEl);
+      li.addEventListener("click", () => {
+        if (!this.showBoneLabels) return;
+        this.selectedBoneName = bone.name;
+        this.populateBones();
+        this.invalidateBoneLabels();
+      });
       list.appendChild(li);
     });
+    this.highlightSelectedBone();
   }
 
   private populateSlots() {
@@ -716,11 +790,18 @@ class App {
     });
   }
 
+  private highlightSelectedBone() {
+    el("bone-list", this.id).querySelectorAll(".item").forEach(el => {
+      const isSelected = this.showBoneLabels && (el as HTMLElement).dataset.boneName === this.selectedBoneName;
+      el.classList.toggle("active", isSelected);
+    });
+  }
+
   // ── Render loop callbacks ──────────────────────────────────────
 
   update(_canvas: SpineCanvas, delta: number) {
     if (!this.skeleton || !this.animationState) return;
-    this.animationState.update(delta);
+    if (!this.showBoneLabels) this.animationState.update(delta);
     this.animationState.apply(this.skeleton);
     this.skeleton.updateWorldTransform(spine.Physics.none);
   }
@@ -770,6 +851,9 @@ class App {
         }
         this.drawBones((renderer as any).shapes);
       }
+
+      if (this.showBoneLabels) this.renderBoneLabels();
+      else this.clearBoneLabels();
 
       renderer.end();
       this.updateZoomDisplay();
@@ -825,6 +909,189 @@ class App {
 
     renderer.line(left, 0, right, 0, this.axisColor);
     renderer.line(0, bottom, 0, top, this.axisColor);
+  }
+
+  private ensureBoneLabelsOverlay() {
+    if (this.boneLabelsOverlay) return;
+    const canvasWrap = el("canvas-wrap", this.id) as HTMLElement;
+    const overlay = document.createElement("div");
+    overlay.className = "bone-label-overlay";
+    canvasWrap.appendChild(overlay);
+    this.boneLabelsOverlay = overlay;
+  }
+
+  private getLabelMeasureContext() {
+    if (this.labelMeasureContext) return this.labelMeasureContext;
+    const canvas = document.createElement("canvas");
+    this.labelMeasureContext = canvas.getContext("2d");
+    return this.labelMeasureContext;
+  }
+
+  private invalidateBoneLabels() {
+    this.lastBoneLabelLayoutKey = "";
+  }
+
+  private clearBoneLabels() {
+    if (this.boneLabelsOverlay) this.boneLabelsOverlay.innerHTML = "";
+    this.lastBoneLabelLayoutKey = "";
+  }
+
+  private renderBoneLabels() {
+    if (!this.spineCanvas || !this.skeleton || !this.boneLabelsOverlay) return;
+    const cam = (this.spineCanvas.renderer as any).camera;
+    const canvasEl = el("canvas", this.id) as HTMLCanvasElement;
+    if (!cam || canvasEl.clientWidth <= 0 || canvasEl.clientHeight <= 0) return;
+
+    const zoomPercent = this.baseZoom > 0 ? (this.baseZoom / cam.zoom) * 100 : 100;
+    const fullNameMode = zoomPercent >= 175;
+    const fontSize = Math.max(10, Math.min(18, 10 + (zoomPercent - 100) * 0.025));
+    const selectedFontSize = 20;
+    const layoutKey = [
+      this.currentFileName,
+      this.activeAnimName,
+      this.selectedBoneName,
+      canvasEl.clientWidth,
+      canvasEl.clientHeight,
+      cam.position.x.toFixed(2),
+      cam.position.y.toFixed(2),
+      cam.zoom.toFixed(4),
+      fullNameMode ? "full" : "initial",
+      fontSize.toFixed(1),
+      selectedFontSize,
+    ].join("|");
+    if (layoutKey === this.lastBoneLabelLayoutKey) return;
+
+    const labelRects: Array<{ left: number; top: number; right: number; bottom: number }> = [];
+    const fragments: string[] = [];
+    const ctx = this.getLabelMeasureContext();
+    if (!ctx) return;
+
+    for (const bone of this.skeleton.bones) {
+      if (!bone.active) continue;
+
+      const isSelected = bone.data.name === this.selectedBoneName;
+      const label = isSelected
+        ? bone.data.name
+        : (fullNameMode ? bone.data.name : this.toBoneInitial(bone.data.name));
+      const currentFontSize = isSelected ? selectedFontSize : fontSize;
+      const point = this.getBoneLabelPoint(bone, canvasEl, cam);
+      if (!point) continue;
+
+      ctx.font = `700 ${currentFontSize}px sans-serif`;
+      const metrics = ctx.measureText(label);
+      const width = Math.max(metrics.width, currentFontSize * 0.9);
+      const height = Math.max(currentFontSize + 2, 12);
+      const rect = {
+        left: point.x - width / 2 - 3,
+        top: point.y - height / 2 - 2,
+        right: point.x + width / 2 + 3,
+        bottom: point.y + height / 2 + 2,
+      };
+
+      if (!isSelected && labelRects.some(existing => this.rectsOverlap(existing, rect))) continue;
+      labelRects.push(rect);
+      fragments.push(
+        `<span class="bone-label${isSelected ? " selected" : ""}" style="left:${point.x.toFixed(1)}px;top:${point.y.toFixed(1)}px;font-size:${currentFontSize.toFixed(1)}px;">${this.escapeHtml(label)}</span>`
+      );
+    }
+
+    this.boneLabelsOverlay.innerHTML = fragments.join("");
+    this.lastBoneLabelLayoutKey = layoutKey;
+  }
+
+  private getBoneLabelPoint(bone: spine.Bone, canvasEl: HTMLCanvasElement, cam: any) {
+    const len = bone.data.length;
+    const worldX = len >= 1 ? bone.worldX + len * bone.a : bone.worldX;
+    const worldY = len >= 1 ? bone.worldY + len * bone.c : bone.worldY;
+    const screen = this.worldToCanvasPoint(worldX, worldY, canvasEl, cam);
+    if (!screen) return null;
+    return { x: screen.x, y: screen.y - 8 };
+  }
+
+  private worldToCanvasPoint(worldX: number, worldY: number, canvasEl: HTMLCanvasElement, cam: any) {
+    const visibleWidth = cam.viewportWidth * cam.zoom;
+    const visibleHeight = cam.viewportHeight * cam.zoom;
+    if (visibleWidth <= 0 || visibleHeight <= 0) return null;
+
+    const left = cam.position.x - visibleWidth / 2;
+    const top = cam.position.y + visibleHeight / 2;
+    const x = ((worldX - left) / visibleWidth) * canvasEl.clientWidth;
+    const y = ((top - worldY) / visibleHeight) * canvasEl.clientHeight;
+    if (x < -40 || x > canvasEl.clientWidth + 40 || y < -20 || y > canvasEl.clientHeight + 20) return null;
+    return { x, y };
+  }
+
+  private toBoneInitial(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return "?";
+    const first = trimmed.match(/[A-Za-z0-9\u4e00-\u9fff]/)?.[0];
+    return (first ?? trimmed.charAt(0)).toUpperCase();
+  }
+
+  private getVisibleBoneTreeRows(allBones: spine.BoneData[], visibleBoneNames: Set<string>) {
+    const childrenByParent = new Map<string | null, spine.BoneData[]>();
+    allBones.forEach(bone => {
+      const parentName = bone.parent?.name ?? null;
+      const bucket = childrenByParent.get(parentName) ?? [];
+      bucket.push(bone);
+      childrenByParent.set(parentName, bucket);
+    });
+
+    const rows: Array<{ bone: spine.BoneData; depth: number; hasVisibleChildren: boolean }> = [];
+    const walk = (bone: spine.BoneData, depth: number) => {
+      const visibleChildren = (childrenByParent.get(bone.name) ?? []).filter(child => visibleBoneNames.has(child.name));
+      if (visibleBoneNames.has(bone.name)) {
+        rows.push({
+          bone,
+          depth,
+          hasVisibleChildren: visibleChildren.length > 0,
+        });
+        if (this.collapsedBoneNames.has(bone.name)) return;
+      }
+
+      const nextDepth = visibleBoneNames.has(bone.name) ? depth + 1 : depth;
+      for (const child of visibleChildren) walk(child, nextDepth);
+    };
+
+    for (const root of childrenByParent.get(null) ?? []) walk(root, 0);
+    return rows;
+  }
+
+  private applyBoneSearchFilter(allBones: spine.BoneData[], candidateBoneNames: Set<string>) {
+    if (!this.boneSearchQuery) return candidateBoneNames;
+
+    const matchingBoneNames = new Set(
+      allBones
+        .filter(bone => candidateBoneNames.has(bone.name) && bone.name.toLowerCase().includes(this.boneSearchQuery))
+        .map(bone => bone.name)
+    );
+    if (matchingBoneNames.size === 0) return matchingBoneNames;
+
+    const filteredBoneNames = new Set<string>();
+    allBones.forEach(bone => {
+      if (!matchingBoneNames.has(bone.name)) return;
+      let current: spine.BoneData | null = bone;
+      while (current) {
+        if (candidateBoneNames.has(current.name)) filteredBoneNames.add(current.name);
+        current = current.parent;
+      }
+    });
+    return filteredBoneNames;
+  }
+
+  private rectsOverlap(
+    a: { left: number; top: number; right: number; bottom: number },
+    b: { left: number; top: number; right: number; bottom: number }
+  ) {
+    return !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+  }
+
+  private escapeHtml(text: string) {
+    return text
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
   }
 
   drawSlotOutline(renderer: any, pulse: number = 0) {

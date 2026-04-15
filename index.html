@@ -213,6 +213,51 @@
         height: 100%;
       }
 
+      .bone-label-overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        overflow: hidden;
+        z-index: 2;
+      }
+
+      .bone-label {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        color: rgba(224, 248, 255, 0.92);
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-shadow:
+          0 1px 1px rgba(0, 0, 0, 0.75),
+          0 0 4px rgba(0, 0, 0, 0.65);
+        white-space: nowrap;
+        user-select: none;
+      }
+
+      .bone-label.selected {
+        color: #ffe066;
+        -webkit-text-stroke: 1.2px rgba(84, 52, 0, 0.96);
+        paint-order: stroke fill;
+        text-shadow:
+          0 1px 0 rgba(0, 0, 0, 0.55),
+          0 0 10px rgba(255, 224, 102, 0.28);
+        animation: selected-bone-label-breathe 0.5s ease-in-out infinite alternate;
+      }
+
+      @keyframes selected-bone-label-breathe {
+        from {
+          transform: translate(-50%, -50%) scale(1);
+          opacity: 0.86;
+          filter: brightness(1);
+        }
+
+        to {
+          transform: translate(-50%, -50%) scale(1.12);
+          opacity: 1;
+          filter: brightness(1.18);
+        }
+      }
+
       .zoom-indicator {
         position: absolute;
         bottom: 8px;
@@ -285,6 +330,28 @@
         flex: 1;
       }
 
+      .bone-search {
+        width: 120px;
+        min-width: 0;
+        height: 24px;
+        padding: 0 8px;
+        border-radius: 4px;
+        border: 1px solid #2f3658;
+        background: #0e1326;
+        color: #dbeafe;
+        font-size: 12px;
+        outline: none;
+      }
+
+      .bone-search::placeholder {
+        color: #64748b;
+      }
+
+      .bone-search:focus {
+        border-color: #7dd3fc;
+        box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.2);
+      }
+
       .panel-count {
         font-size: 10px;
         color: #6b7280;
@@ -334,7 +401,48 @@
       .anim-panel .item-list li { color: #a78bfa; }
       .anim-panel .item-list li.active { color: #c4b5fd; background: rgba(167, 139, 250, 0.2); }
       .bone-list li { color: #7dd3fc; }
+      .bone-list li.active {
+        color: #d6f4ff;
+        background: rgba(125, 211, 252, 0.2);
+        box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.35);
+      }
       .slot-list li { color: #86efac; }
+
+      .bone-list li.tree-item {
+        padding-left: 0;
+      }
+
+      .bone-list .tree-row {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+      }
+
+      .bone-list .tree-toggle {
+        width: 16px;
+        height: 16px;
+        margin-right: 4px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: #7c83a8;
+        cursor: pointer;
+        font: inherit;
+        line-height: 1;
+        flex: 0 0 auto;
+      }
+
+      .bone-list .tree-toggle.spacer {
+        cursor: default;
+        opacity: 0;
+      }
+
+      .bone-list .tree-label {
+        min-width: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
 
       .toggle-btn {
         background: transparent;
@@ -540,7 +648,7 @@
 
     <!-- ══════════ VIEWER 1 ══════════ -->
     <div class="viewer" id="viewer-1">
-      <input type="file" id="file-input-1" multiple style="display:none" />
+      <input type="file" id="file-input-1" multiple accept=".png,.atlas,.atlas.txt,.txt,.skel,.skel.bytes,.bytes,image/png,text/plain,application/octet-stream" style="display:none" />
       <div class="viewer-caption">
         <div class="viewer-caption-content" id="viewer-caption-1"></div>
       </div>
@@ -567,9 +675,11 @@
       </div>
 
       <div id="details-bar-1" class="details-bar collapsed">
-        <div class="detail-section">
+          <div class="detail-section">
           <div class="panel-header">
             <span class="panel-title">Bones</span>
+            <input id="bone-search-1" class="bone-search" type="search" placeholder="搜索骨骼" />
+            <button id="toggle-bone-labels-1" class="toggle-btn" type="button">骨骼名称</button>
             <button id="toggle-bones-1" class="toggle-btn" type="button">骨骼</button>
             <span class="panel-count"><span id="bone-count-1">0</span> 个</span>
           </div>
@@ -608,7 +718,7 @@
 
     <!-- ══════════ VIEWER 2 ══════════ -->
     <div class="viewer viewer2" id="viewer-2">
-      <input type="file" id="file-input-2" multiple style="display:none" />
+      <input type="file" id="file-input-2" multiple accept=".png,.atlas,.atlas.txt,.txt,.skel,.skel.bytes,.bytes,image/png,text/plain,application/octet-stream" style="display:none" />
       <div class="viewer-caption">
         <div class="viewer-caption-content" id="viewer-caption-2"></div>
       </div>
@@ -635,9 +745,11 @@
       </div>
 
       <div id="details-bar-2" class="details-bar collapsed">
-        <div class="detail-section">
+          <div class="detail-section">
           <div class="panel-header">
             <span class="panel-title">Bones</span>
+            <input id="bone-search-2" class="bone-search" type="search" placeholder="搜索骨骼" />
+            <button id="toggle-bone-labels-2" class="toggle-btn" type="button">骨骼名称</button>
             <button id="toggle-bones-2" class="toggle-btn" type="button">骨骼</button>
             <span class="panel-count"><span id="bone-count-2">0</span> 个</span>
           </div>
