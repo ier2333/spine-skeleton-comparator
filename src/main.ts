@@ -55,6 +55,7 @@ class App {
     this.wirePanZoom();
     this.wireFileInput();
     this.wireToggles();
+    this.wireSlotListKeyboard();
     this.wirePanelCollapse();
     this.wireToolbarButtons();
   }
@@ -78,8 +79,7 @@ class App {
       a.name.toLowerCase() === "walk"
     );
     if (idle) {
-      this.activeAnimName = idle.name;
-      this.animationState.setAnimation(0, idle.name, true);
+      this.setActiveAnimation(idle.name);
     } else {
       console.log("[playDefaultAnimation] No idle found — staying in setup pose");
     }
@@ -212,14 +212,13 @@ class App {
       const stateData = new spine.AnimationStateData(this.skeletonData);
       this.animationState = new spine.AnimationState(stateData);
       this.populateAll();
+      this.currentFileName = displayPath ?? skeletonPath.replace("/spine/", "");
+      this.statusMessage = "";
       if (animationName) {
-        this.activeAnimName = animationName;
-        this.animationState.setAnimation(0, animationName, true);
+        this.setActiveAnimation(animationName);
       } else {
         this.playDefaultAnimation();
       }
-      this.currentFileName = displayPath ?? skeletonPath.replace("/spine/", "");
-      this.statusMessage = "";
       this.highlightSelectedAnim();
       this.resetCamera();
       this.updateViewerCaption();
@@ -362,6 +361,28 @@ class App {
     boneSearch.addEventListener("input", () => {
       this.boneSearchQuery = boneSearch.value.trim().toLowerCase();
       this.populateBones();
+    });
+  }
+
+  private wireSlotListKeyboard() {
+    const slotList = el("slot-list", this.id) as HTMLUListElement;
+    slotList.tabIndex = 0;
+    slotList.addEventListener("keydown", event => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+
+      const visibleSlotIndices = this.getVisibleSlotIndices();
+      if (visibleSlotIndices.length === 0) return;
+
+      event.preventDefault();
+      const offset = event.key === "ArrowDown" ? 1 : -1;
+      const currentVisibleIndex = visibleSlotIndices.indexOf(this.selectedSlotIndex);
+      const nextVisibleIndex = currentVisibleIndex >= 0
+        ? Math.min(Math.max(currentVisibleIndex + offset, 0), visibleSlotIndices.length - 1)
+        : (offset > 0 ? 0 : visibleSlotIndices.length - 1);
+
+      this.selectedSlotIndex = visibleSlotIndices[nextVisibleIndex];
+      this.highlightSelectedSlot();
+      this.scrollSelectedSlotIntoView();
     });
   }
 
@@ -568,10 +589,7 @@ class App {
         ? `<span class="list-item-content"><span class="playing-dot"></span><span>${anim.name}</span></span>`
         : `<span class="list-item-content"><span class="list-item-bullet">•</span><span>${anim.name}</span></span>`;
       li.addEventListener("click", () => {
-        this.activeAnimName = anim.name;
-        this.animationState!.setAnimation(0, anim.name, true);
-        this.populateAnims();
-        this.updateViewerCaption();
+        this.setActiveAnimation(anim.name);
       });
       list.appendChild(li);
     });
@@ -657,32 +675,37 @@ class App {
       this.nonEmptySlotIndices.add(idx);
     });
 
-    let displayed = compareMode
-      ? allSlots.filter(slot => !this.getPeerSlotNames().has(slot.name))
-      : allSlots;
+    let displayedEntries = allSlots.map((slot, originalIndex) => ({ slot, originalIndex }));
 
-    displayed = this.showNonEmptySlotsOnly
-      ? displayed.filter(slot => {
-          const originalIndex = this.skeletonData!.slots.findIndex(candidate => candidate.name === slot.name);
-          return originalIndex >= 0 && this.nonEmptySlotIndices.has(originalIndex);
-        })
-      : displayed;
+    if (compareMode) {
+      const peerSlotNames = this.getPeerSlotNames();
+      displayedEntries = displayedEntries.filter(({ slot }) => !peerSlotNames.has(slot.name));
+    }
 
-    countEl.textContent = `${displayed.length}/${total}`;
+    if (this.showNonEmptySlotsOnly) {
+      displayedEntries = displayedEntries.filter(({ originalIndex }) => this.nonEmptySlotIndices.has(originalIndex));
+    }
+
+    if (this.selectedSlotIndex >= 0 && !displayedEntries.some(({ originalIndex }) => originalIndex === this.selectedSlotIndex)) {
+      this.selectedSlotIndex = -1;
+    }
+
+    countEl.textContent = `${displayedEntries.length}/${total}`;
     list.innerHTML = "";
-    this.setDetailSectionHighlight("slot-list", compareMode && displayed.length > 0);
-    displayed.forEach(slot => {
-      const originalIdx = this.skeletonData!.slots.findIndex(candidate => candidate.name === slot.name);
+    this.setDetailSectionHighlight("slot-list", compareMode && displayedEntries.length > 0);
+    displayedEntries.forEach(({ slot, originalIndex }) => {
       const li = document.createElement("li");
       li.className = "item";
-      li.dataset.slotIndex = String(originalIdx);
+      li.dataset.slotIndex = String(originalIndex);
       li.innerHTML = `<span class="list-item-content"><span class="list-item-bullet">•</span><span>${slot.name}</span></span>`;
       li.addEventListener("click", () => {
-        this.selectedSlotIndex = originalIdx;
+        this.selectedSlotIndex = originalIndex;
         this.highlightSelectedSlot();
+        (list as HTMLUListElement).focus({ preventScroll: true });
       });
       list.appendChild(li);
     });
+    this.highlightSelectedSlot();
   }
 
   private getPeerApp() {
@@ -790,6 +813,35 @@ class App {
     });
   }
 
+  private getVisibleSlotIndices() {
+    return Array.from(el("slot-list", this.id).querySelectorAll(".item"))
+      .map(item => Number((item as HTMLElement).dataset.slotIndex))
+      .filter(index => Number.isFinite(index) && index >= 0);
+  }
+
+  private scrollSelectedSlotIntoView() {
+    const selectedItem = el("slot-list", this.id).querySelector(`.item[data-slot-index="${this.selectedSlotIndex}"]`) as HTMLElement | null;
+    selectedItem?.scrollIntoView({ block: "nearest" });
+  }
+
+  private syncCurrentAnimationPose() {
+    if (!this.skeleton || !this.animationState) return;
+    this.animationState.update(0);
+    this.animationState.apply(this.skeleton);
+    this.skeleton.updateWorldTransform(spine.Physics.none);
+  }
+
+  private setActiveAnimation(animationName: string) {
+    if (!this.animationState || !this.skeleton) return;
+    this.skeleton.setToSetupPose();
+    this.activeAnimName = animationName;
+    this.animationState.setAnimation(0, animationName, true);
+    this.syncCurrentAnimationPose();
+    this.populateAnims();
+    this.populateSlots();
+    this.updateViewerCaption();
+  }
+
   private highlightSelectedBone() {
     el("bone-list", this.id).querySelectorAll(".item").forEach(el => {
       const isSelected = this.showBoneLabels && (el as HTMLElement).dataset.boneName === this.selectedBoneName;
@@ -832,15 +884,17 @@ class App {
 
       if (this.showAxes) this.drawAxes(renderer);
 
+      const t = performance.now() / 1000;
+      const slotBlink = this.applySelectedSlotBlink(t);
       renderer.drawSkeleton(this.skeleton, this.usePremultipliedAlpha);
+      slotBlink?.restore();
 
       if (this.selectedSlotIndex >= 0 && this.skeleton) {
         if (!this.shapesEnabledThisFrame) {
           (renderer as any).enableRenderer((renderer as any).shapes);
           this.shapesEnabledThisFrame = true;
         }
-        const t = (canvas as any).time?.seconds ?? 0;
-        const pulse = (Math.sin(t * 3.0) + 1) * 0.5;
+        const pulse = (Math.sin(t * Math.PI * 2) + 1) * 0.5;
         this.drawSlotOutline(renderer, pulse);
       }
 
@@ -1092,6 +1146,40 @@ class App {
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;");
+  }
+
+  private applySelectedSlotBlink(timeSeconds: number) {
+    if (!this.skeleton || this.selectedSlotIndex < 0) return null;
+
+    const slot = this.skeleton.slots[this.selectedSlotIndex];
+    if (!slot || !slot.bone.active || !slot.getAttachment()) return null;
+
+    const original = {
+      r: slot.color.r,
+      g: slot.color.g,
+      b: slot.color.b,
+      a: slot.color.a,
+    };
+    const cycle = timeSeconds % 1;
+    let phase = 0;
+    if (cycle < 0.2) phase = 0;
+    else if (cycle < 0.4) phase = (cycle - 0.2) / 0.2;
+    else if (cycle < 0.7) phase = 1;
+    else if (cycle < 0.9) phase = 1 - (cycle - 0.7) / 0.2;
+    else phase = 0;
+
+    const brightness = 0.2 + phase * 0.8;
+
+    slot.color.set(
+      Math.min(1, original.r * brightness),
+      Math.min(1, original.g * brightness),
+      Math.min(1, original.b * brightness),
+      original.a
+    );
+
+    return {
+      restore: () => slot.color.set(original.r, original.g, original.b, original.a),
+    };
   }
 
   drawSlotOutline(renderer: any, pulse: number = 0) {
